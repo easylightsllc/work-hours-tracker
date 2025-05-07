@@ -1,0 +1,236 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Work Hours Tracker (Airtable + Rates)</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    input, button, select { padding: 8px; margin: 5px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background-color: #f2f2f2; }
+    #employeeModal, #manageEmployeesModal {
+      display: none; position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%); background: white;
+      padding: 20px; border: 2px solid #ccc; z-index: 1000;
+    }
+    #overlay {
+      display: none; position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 500;
+    }
+  </style>
+</head>
+<body>
+  <h2>Work Hours Tracker (Airtable with Pay Rates)</h2>
+  <div>
+    <select id="employeeSelect" onchange="fillRate()">
+      <option value="">Select Employee</option>
+    </select>
+    <button onclick="openEmployeeModal()">Add Employee</button>
+    <button onclick="openManageEmployees()">Manage Employees</button>
+  </div>
+  <div>
+    <input type="date" id="workDate">
+    <input type="number" id="hoursWorked" placeholder="Hours Worked" step="0.01">
+    <input type="number" id="hourlyRate" placeholder="Hourly Rate ($)" step="0.01">
+    <button onclick="addEntry()">Add Entry</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Employee</th>
+        <th>Date</th>
+        <th>Hours</th>
+        <th>Rate</th>
+        <th>Pay</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="entriesTable"></tbody>
+  </table>
+  <div id="overlay"></div>
+  <div id="employeeModal">
+    <h3>Add New Employee</h3>
+    <input type="text" id="newEmployeeName" placeholder="Name"><br>
+    <input type="number" id="newEmployeeRate" placeholder="Hourly Rate ($)" step="0.01"><br>
+    <button onclick="saveEmployee()">Save</button>
+    <button onclick="closeEmployeeModal()">Cancel</button>
+  </div>
+  <div id="manageEmployeesModal">
+    <h3>Manage Employees</h3>
+    <ul id="employeeList"></ul>
+    <button onclick="closeManageEmployees()">Close</button>
+  </div>
+  <script>
+    const API_URL = "https://api.airtable.com/v0/appRFQ1SqBjFygj47/Entries";
+    const TOKEN = "pat2MZxaJZuK4HHe1.6f484aa928c19942e953c300854d1a4bdf1ae2a1b6be355676437d349e9b1870";
+
+    function loadEmployees() {
+      const select = document.getElementById("employeeSelect");
+      select.innerHTML = '<option value="">Select Employee</option>';
+      const employees = JSON.parse(localStorage.getItem("employees")) || [];
+      employees.forEach(emp => {
+        const option = document.createElement("option");
+        option.value = emp.name;
+        option.textContent = `${emp.name} ($${emp.rate}/hr)`;
+        option.setAttribute("data-rate", emp.rate);
+        select.appendChild(option);
+      });
+    }
+
+    function saveEmployee() {
+      const name = document.getElementById("newEmployeeName").value.trim();
+      const rate = parseFloat(document.getElementById("newEmployeeRate").value);
+      if (!name || isNaN(rate)) {
+        alert("Please enter valid name and rate.");
+        return;
+      }
+      const employees = JSON.parse(localStorage.getItem("employees")) || [];
+      employees.push({ name, rate });
+      localStorage.setItem("employees", JSON.stringify(employees));
+      loadEmployees();
+      closeEmployeeModal();
+      document.getElementById("newEmployeeName").value = "";
+      document.getElementById("newEmployeeRate").value = "";
+    }
+
+    function openEmployeeModal() {
+      document.getElementById("overlay").style.display = "block";
+      document.getElementById("employeeModal").style.display = "block";
+    }
+
+    function closeEmployeeModal() {
+      document.getElementById("overlay").style.display = "none";
+      document.getElementById("employeeModal").style.display = "none";
+    }
+
+    function openManageEmployees() {
+      const employees = JSON.parse(localStorage.getItem("employees")) || [];
+      const list = document.getElementById("employeeList");
+      list.innerHTML = "";
+      employees.forEach((emp, index) => {
+        const li = document.createElement("li");
+        li.innerHTML = `${emp.name} ($${emp.rate}/hr) <button onclick="removeEmployee(${index})">Remove</button>`;
+        list.appendChild(li);
+      });
+      document.getElementById("overlay").style.display = "block";
+      document.getElementById("manageEmployeesModal").style.display = "block";
+    }
+
+    function closeManageEmployees() {
+      document.getElementById("overlay").style.display = "none";
+      document.getElementById("manageEmployeesModal").style.display = "none";
+    }
+
+    function removeEmployee(index) {
+      const employees = JSON.parse(localStorage.getItem("employees")) || [];
+      employees.splice(index, 1);
+      localStorage.setItem("employees", JSON.stringify(employees));
+      openManageEmployees();
+      loadEmployees();
+    }
+
+    function fillRate() {
+      const select = document.getElementById("employeeSelect");
+      const rate = select.options[select.selectedIndex].getAttribute("data-rate");
+      if (rate) {
+        document.getElementById("hourlyRate").value = rate;
+      }
+    }
+
+    function addEntry() {
+      const name = document.getElementById("employeeSelect").value;
+      const date = document.getElementById("workDate").value;
+      const hours = parseFloat(document.getElementById("hoursWorked").value);
+      const rate = parseFloat(document.getElementById("hourlyRate").value);
+      const pay = (hours * rate).toFixed(2);
+
+      if (!name || !date || isNaN(hours) || isNaN(rate)) {
+        alert("Please fill in all fields correctly.");
+        return;
+      }
+
+      const entry = {
+        fields: {
+          "Employee Name": name,
+          "Date": date,
+          "Hours Worked": hours,
+          "Hourly Rate ($)": rate,
+          "Pay Owed ($)": parseFloat(pay)
+        }
+      };
+
+      fetch(API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(entry)
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log("Added:", data);
+        loadEntries();
+      })
+      .catch(err => {
+        console.error("Error adding entry:", err);
+        alert("Failed to add entry.");
+      });
+
+      document.getElementById("workDate").value = "";
+      document.getElementById("hoursWorked").value = "";
+      document.getElementById("hourlyRate").value = "";
+    }
+
+    function deleteEntry(recordId) {
+      if (!confirm("Delete this entry?")) return;
+      fetch(`${API_URL}/${recordId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`
+        }
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log("Deleted:", data);
+        loadEntries();
+      })
+      .catch(err => {
+        console.error("Error deleting entry:", err);
+        alert("Failed to delete.");
+      });
+    }
+
+    function loadEntries() {
+      fetch(API_URL, {
+        headers: { Authorization: `Bearer ${TOKEN}` }
+      })
+      .then(res => res.json())
+      .then(data => {
+        const table = document.getElementById("entriesTable");
+        table.innerHTML = "";
+        data.records.forEach(rec => {
+          const f = rec.fields;
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${f["Employee Name"] || ""}</td>
+            <td>${f["Date"] || ""}</td>
+            <td>${f["Hours Worked"] || ""}</td>
+            <td>${f["Hourly Rate ($)"] || ""}</td>
+            <td>${f["Pay Owed ($)"] || ""}</td>
+            <td><button onclick="deleteEntry('${rec.id}')">Delete</button></td>
+          `;
+          table.appendChild(row);
+        });
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      loadEmployees();
+      loadEntries();
+    });
+  </script>
+</body>
+</html>
